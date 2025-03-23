@@ -46,7 +46,7 @@ def create_report(detected,pitch,intensity,f1,f2,f3):
         title_style = ParagraphStyle(
             'CustomTitle',
             parent=styles['Heading1'],
-            textColor=HexColor('#DB4486'),
+            textColor=HexColor('#0896B6'),
             fontSize=16,
             spaceAfter=5,
             alignment=0,
@@ -58,7 +58,7 @@ def create_report(detected,pitch,intensity,f1,f2,f3):
             parent=styles['Normal'],
             fontSize=11,
             textColor=colors.white,
-            backColor=HexColor('#FFB6C1'),
+            backColor=HexColor('#0896B6'),
             spaceBefore=15,
             spaceAfter=10,
             leftIndent=4,
@@ -84,7 +84,7 @@ def create_report(detected,pitch,intensity,f1,f2,f3):
         elements = []
 
         header_data = [[
-            Paragraph('<img src="logo.jpg" width="200" height="30"/> ', title_style),
+            Paragraph('<img src="logo.png" width="200" height="30"/> ', title_style),
             Paragraph('Voice Analysis Report', n_style)
         ]]
         header_table = Table(header_data, colWidths=[4*inch, 4*inch])
@@ -100,7 +100,7 @@ def create_report(detected,pitch,intensity,f1,f2,f3):
 
        
         elements.append(Paragraph('Patient Information', section_style))
-        elements.append(Paragraph(f'Analysis Date: 11-03-25', normal_style))
+        elements.append(Paragraph(f'Analysis Date: 23-03-25', normal_style))
         elements.append(Paragraph(f'Parkinson\'s Probability: {detected}',normal_style))
 
     
@@ -120,8 +120,8 @@ def create_report(detected,pitch,intensity,f1,f2,f3):
         )
         measurements_table.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#FFB6C1')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#0896B6')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
             ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
             ('FONTSIZE', (0, 0), (-1, -1), 10),
