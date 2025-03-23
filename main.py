@@ -28,6 +28,8 @@ import cv2 as cv
 import imutils
 from tensorflow.keras.models import load_model
 from fastapi.middleware.cors import CORSMiddleware
+from pdf.report_tumor import create_pdf,process_and_save_images
+from starlette.background import BackgroundTask
  
 labels: List[str] = ['Healthy', 'Parkinson']
 
@@ -358,10 +360,10 @@ async def pneumonia_router(file: UploadFile = File(...)):
     model = Train().define_model()
     model.load_weights('models/pneumonia.h5')
     
-    # Read the file content
+    
     contents = await file.read()
     
-    # Process the image
+   
     image = Image.open(io.BytesIO(contents))
     if image.mode != 'L':
         image = image.convert('L')
@@ -378,22 +380,28 @@ async def pneumonia_router(file: UploadFile = File(...)):
     }
 
 
-@app.post("/predict/braintumor", response_model=Dict[str, float])
+@app.post("/predict/braintumor", response_class=FileResponse)
 async def predict_tumor(
-    file: UploadFile = File(...)  
+    file: UploadFile = File(...)
 ):
+    temp_image_path = "temp_input_image.jpg"
     try:
         if not file.content_type.startswith('image/'):
             raise HTTPException(400, detail="File must be an image")
+        
+        # Save the uploaded file temporarily
         contents = await file.read()
-
+        with open(temp_image_path, "wb") as buffer:
+            buffer.write(contents)
+        
+        # Process image for prediction
         nparr = np.frombuffer(contents, np.uint8)
         image = cv.imdecode(nparr, cv.IMREAD_COLOR)
         
         if image is None:
             raise HTTPException(400, detail="Could not process image")
 
-
+        # Your existing image processing code
         gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
         gray = cv.GaussianBlur(gray, (5, 5), 0)
 
@@ -422,14 +430,39 @@ async def predict_tumor(
 
         prediction = modelb.predict(processed_image)
         probability = float(prediction[0][0])
+        
+        # Generate processing steps images
+        process_and_save_images(temp_image_path)
+        
+        # Create PDF with the result
+        final_result = probability * 100  # Convert to percentage
+        create_pdf(final_result)  # Using the original create_pdf function
 
-        return {
-            "prediction": float(probability > 0.5),  
-            "probability": probability
-        }
+        # Create response with PDF file
+        pdf_path = "image_processing_steps.pdf"
+        
+        # Return the PDF file and let FastAPI handle the cleanup
+        return FileResponse(
+            path=pdf_path,
+            media_type='application/pdf',
+            filename="brain_tumor_report.pdf",
+            background=BackgroundTask(cleanup, temp_image_path, pdf_path)
+        )
 
     except Exception as e:
+        # Clean up temporary files in case of error
+        cleanup(temp_image_path, "image_processing_steps.pdf")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Separate cleanup function
+def cleanup(temp_image_path: str, pdf_path: str):
+    try:
+        if os.path.exists(temp_image_path):
+            os.remove(temp_image_path)
+        if os.path.exists(pdf_path):
+            os.remove(pdf_path)
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
     
 dysarthria_model = load_model('models/dysarthria_model.keras')  
 dysarthria_scaler = StandardScaler()

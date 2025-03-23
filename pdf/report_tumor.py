@@ -89,9 +89,11 @@ def create_pdf(final_result):
     
     c.setFont("Helvetica", 12)
     prob_y = info_y - 1.2*inch  
-    c.drawString(left_x, info_y-0.9*inch, "Probabilistic Result:")
+    c.drawString(left_x, info_y-0.9*inch, "Provisional Result:")
     c.setFont("Helvetica", 12)
-    c.drawString(left_x + 1.5*inch, info_y-0.9*inch, f"{final_result}%")
+    result=""
+    result="Yes" if final_result>70 else "No"
+    c.drawString(left_x + 1.5*inch, info_y-0.9*inch, f"{result}")
     
 
     c.setStrokeColorRGB(0.8, 0.8, 0.8)
