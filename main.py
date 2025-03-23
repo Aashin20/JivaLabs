@@ -269,6 +269,10 @@ async def predict_from_audio(file: UploadFile = File(...)):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+    
+
+
+
 
 @app.post("/predict/park")
 async def analyze_and_predict(file: UploadFile = File(...)):
