@@ -17,6 +17,15 @@ import uvicorn
 import traceback
 import os
 from typing import Dict, Any,List
+import io
+import tensorflow as tf
+from fastapi import APIRouter, File
+from PIL import Image
+from keras.preprocessing.image import img_to_array
+from classifier.train import Train
+import cv2 as cv
+import imutils
+from tensorflow.keras.models import load_model
  
 labels: List[str] = ['Healthy', 'Parkinson']
 
@@ -24,6 +33,7 @@ app = FastAPI()
 
 model = joblib.load('models/catboost_model_20250323_032657.pkl')
 preprocessor = joblib.load('models/catboost_preprocessor_20250323_032657.pkl')
+model = load_model('models/brain-tumor.h5')
 
 class PredictionOutput(BaseModel):
     prediction: int
@@ -333,6 +343,81 @@ async def analyze_and_predict(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post('/predict/pneumonia')
+def pneumonia_router(image_file: bytes = File(...)):
+    model = Train().define_model()
+    model.load_weights('models/pneumonia.h5')
+    image = Image.open(io.BytesIO(image_file))
+    if image.mode != 'L':
+        image = image.convert('L')
+    image = image.resize((64, 64))
+    image = img_to_array(image)/255.0
+    image = image.reshape(1, 64, 64, 1)
+
+ 
+    prediction = model.predict(image)
+    probability = float(prediction[0][0])  
+    predicted_class = 'pneumonia' if probability > 0.5 else 'normal'
+
+    return {
+        'predicted_class': predicted_class,
+        'pneumonia_probability': probability
+    }
+
+
+@app.post("/predict/braintumor", response_model=Dict[str, float])
+async def predict_tumor(
+    file: UploadFile = File(...)  
+):
+    try:
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(400, detail="File must be an image")
+        contents = await file.read()
+
+        nparr = np.frombuffer(contents, np.uint8)
+        image = cv.imdecode(nparr, cv.IMREAD_COLOR)
+        
+        if image is None:
+            raise HTTPException(400, detail="Could not process image")
+
+
+        gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+        gray = cv.GaussianBlur(gray, (5, 5), 0)
+
+        thresh = cv.threshold(gray, 45, 255, cv.THRESH_BINARY)[1]
+        thresh = cv.erode(thresh, None, iterations=2)
+        thresh = cv.dilate(thresh, None, iterations=2)
+
+        cnts = cv.findContours(thresh.copy(), cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        cnts = imutils.grab_contours(cnts)
+        
+        if not cnts:
+            raise HTTPException(400, detail="No contours found in image")
+            
+        c = max(cnts, key=cv.contourArea)
+
+        extLeft = tuple(c[c[:, :, 0].argmin()][0])
+        extRight = tuple(c[c[:, :, 0].argmax()][0])
+        extTop = tuple(c[c[:, :, 1].argmin()][0])
+        extBot = tuple(c[c[:, :, 1].argmax()][0])
+
+        new_image = image[extTop[1]:extBot[1], extLeft[0]:extRight[0]]
+        
+        processed_image = cv.resize(new_image, dsize=(240, 240), interpolation=cv.INTER_CUBIC)
+        processed_image = processed_image / 255.
+        processed_image = processed_image.reshape((1, 240, 240, 3))
+
+        prediction = model.predict(processed_image)
+        probability = float(prediction[0][0])
+
+        return {
+            "prediction": float(probability > 0.5),  
+            "probability": probability
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 
 @app.get("/health")
 async def health_check():
