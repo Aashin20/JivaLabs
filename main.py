@@ -17,7 +17,8 @@ import uvicorn
 import traceback
 import os
 from typing import Dict, Any,List
-
+ 
+labels: List[str] = ['Healthy', 'Parkinson']
 
 app = FastAPI()
 
