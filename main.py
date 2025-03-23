@@ -7,6 +7,7 @@ import parselmouth
 from pdf.report import create_report
 from parselmouth.praat import call
 import numpy as np
+from sklearn.preprocessing import StandardScaler
 import librosa
 from scipy.stats import kurtosis, skew
 import io
@@ -26,14 +27,21 @@ from classifier.train import Train
 import cv2 as cv
 import imutils
 from tensorflow.keras.models import load_model
+from fastapi.middleware.cors import CORSMiddleware
  
 labels: List[str] = ['Healthy', 'Parkinson']
 
 app = FastAPI()
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 model = joblib.load('models/catboost_model_20250323_032657.pkl')
 preprocessor = joblib.load('models/catboost_preprocessor_20250323_032657.pkl')
-model = load_model('models/brain-tumor.h5')
+modelb = load_model('models/brain-tumor.h5')
 
 class PredictionOutput(BaseModel):
     prediction: int
@@ -221,7 +229,9 @@ column_mapping = {
 }
 
 @app.post("/predict/als", response_model=PredictionOutput)
-async def predict_from_audio(file: UploadFile = File(...), age: int = None, sex: str = None):
+async def predict_from_audio(file: UploadFile = File(...)):
+    age=20
+    sex="M"
     try:
         if not file.filename.endswith(('.wav', '.WAV')):
             raise HTTPException(status_code=400, detail="Only WAV files are supported")
@@ -248,7 +258,7 @@ async def predict_from_audio(file: UploadFile = File(...), age: int = None, sex:
         probability = model.predict_proba(processed_data)[0][1]
         
         prediction = 1 if probability >= 0.7 else 0
-        
+        print(prediction,probability)
         return PredictionOutput(
             prediction=int(prediction),
             probability=float(probability),
@@ -344,21 +354,24 @@ async def analyze_and_predict(file: UploadFile = File(...)):
 
 
 @app.post('/predict/pneumonia')
-def pneumonia_router(image_file: bytes = File(...)):
+async def pneumonia_router(file: UploadFile = File(...)):
     model = Train().define_model()
     model.load_weights('models/pneumonia.h5')
-    image = Image.open(io.BytesIO(image_file))
+    
+    # Read the file content
+    contents = await file.read()
+    
+    # Process the image
+    image = Image.open(io.BytesIO(contents))
     if image.mode != 'L':
         image = image.convert('L')
     image = image.resize((64, 64))
     image = img_to_array(image)/255.0
     image = image.reshape(1, 64, 64, 1)
-
  
     prediction = model.predict(image)
     probability = float(prediction[0][0])  
     predicted_class = 'pneumonia' if probability > 0.5 else 'normal'
-
     return {
         'predicted_class': predicted_class,
         'pneumonia_probability': probability
@@ -407,7 +420,7 @@ async def predict_tumor(
         processed_image = processed_image / 255.
         processed_image = processed_image.reshape((1, 240, 240, 3))
 
-        prediction = model.predict(processed_image)
+        prediction = modelb.predict(processed_image)
         probability = float(prediction[0][0])
 
         return {
@@ -418,7 +431,128 @@ async def predict_tumor(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
+dysarthria_model = load_model('models/dysarthria_model.keras')  
+dysarthria_scaler = StandardScaler()
 
+def preprocess_audio_for_dysarthria(audio_data, sr, duration=3):
+    try:
+        if len(audio_data) < sr * duration:
+            raise ValueError("Audio file is too short. Minimum 3 seconds required.")
+            
+        target_length = sr * duration
+        if len(audio_data) > target_length:
+            audio_data = audio_data[:target_length]
+            
+        mfcc = librosa.feature.mfcc(
+            y=audio_data, 
+            sr=sr, 
+            n_mfcc=13,
+            hop_length=512  
+        )
+        
+        spectral_centroid = librosa.feature.spectral_centroid(
+            y=audio_data, 
+            sr=sr,
+            hop_length=512
+        )
+        
+        rmse = librosa.feature.rms(
+            y=audio_data,
+            hop_length=512
+        )
+        
+        features = np.vstack([mfcc, spectral_centroid, rmse])  
+        features = features.T  
+        
+        if features.shape[0] < 94:
+            pad_length = 94 - features.shape[0]
+            features = np.pad(features, ((0, pad_length), (0, 0)))
+        else:
+            features = features[:94, :]
+            
+        if np.isnan(features).any() or np.isinf(features).any():
+            raise ValueError("Invalid audio features detected")
+            
+        return features
+        
+    except Exception as e:
+        raise ValueError(f"Error processing audio features: {str(e)}")
+
+def analyze_dysarthria_features(audio_data, sr):
+    try:
+        pitch = librosa.yin(audio_data, fmin=75, fmax=600, sr=sr)
+        mean_pitch = np.mean(pitch[pitch > 0])
+        
+        rms = librosa.feature.rms(y=audio_data)[0]
+        mean_intensity = np.mean(rms)
+        
+        zero_crossing_rate = librosa.feature.zero_crossing_rate(audio_data)[0]
+        zcr_mean = np.mean(zero_crossing_rate)
+        
+        return {
+            'mean_pitch': mean_pitch,
+            'mean_intensity': mean_intensity,
+            'zero_crossing_rate': zcr_mean
+        }
+    except Exception as e:
+        raise ValueError(f"Error analyzing audio features: {str(e)}")
+
+@app.post("/predict/dysarthria")
+async def predict_dysarthria(file: UploadFile = File(...)):
+    if not file.filename.endswith(('.wav', '.WAV')):
+        raise HTTPException(status_code=400, detail="Only WAV files are supported")
+    
+    try:
+        contents = await file.read()
+        audio_bytes = io.BytesIO(contents)
+        
+        audio_data, sr = sf.read(audio_bytes)
+        
+        if len(audio_data) / sr < 3:
+            raise HTTPException(status_code=400, detail="Audio must be at least 3 seconds long")
+            
+        features = preprocess_audio_for_dysarthria(audio_data, sr)
+        
+        features = features.reshape(1, 94, 15)
+        
+        prediction = dysarthria_model.predict(features)
+        probability = float(prediction[0][0])
+        
+        audio_analysis = analyze_dysarthria_features(audio_data, sr)
+        
+        dysarthria_thresholds = {
+            'probability': 0.7,
+            'pitch_threshold': 150,
+            'intensity_threshold': 0.1,
+            'zcr_threshold': 0.15
+        }
+        
+        is_dysarthric = (
+            probability >= dysarthria_thresholds['probability'] and
+            audio_analysis['mean_pitch'] < dysarthria_thresholds['pitch_threshold'] and
+            audio_analysis['mean_intensity'] < dysarthria_thresholds['intensity_threshold'] and
+            audio_analysis['zero_crossing_rate'] > dysarthria_thresholds['zcr_threshold']
+        )
+        
+        severity = "High" if probability > 0.85 else "Medium" if probability > 0.7 else "Low"
+        print("Dysarthria" if is_dysarthric else "Non-Dysarthria",)
+        return {
+            "filename": file.filename,
+            "prediction": "Dysarthria" if is_dysarthric else "Non-Dysarthria",
+            "probability": probability,
+            "severity": severity if is_dysarthric else "None",
+            "analysis": {
+                "pitch": float(audio_analysis['mean_pitch']),
+                "intensity": float(audio_analysis['mean_intensity']),
+                "zero_crossing_rate": float(audio_analysis['zero_crossing_rate'])
+            },
+            "thresholds": dysarthria_thresholds,
+            "status": "success"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+    
 @app.get("/health")
 async def health_check():
     return {
