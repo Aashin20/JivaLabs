@@ -273,7 +273,6 @@ async def predict_from_audio(file: UploadFile = File(...)):
 
 
 
-
 @app.post("/predict/park")
 async def analyze_and_predict(file: UploadFile = File(...)):
     if not file:
@@ -393,19 +392,19 @@ async def predict_tumor(
         if not file.content_type.startswith('image/'):
             raise HTTPException(400, detail="File must be an image")
         
-        # Save the uploaded file temporarily
+        
         contents = await file.read()
         with open(temp_image_path, "wb") as buffer:
             buffer.write(contents)
         
-        # Process image for prediction
+        
         nparr = np.frombuffer(contents, np.uint8)
         image = cv.imdecode(nparr, cv.IMREAD_COLOR)
         
         if image is None:
             raise HTTPException(400, detail="Could not process image")
 
-        # Your existing image processing code
+     
         gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
         gray = cv.GaussianBlur(gray, (5, 5), 0)
 
@@ -435,17 +434,17 @@ async def predict_tumor(
         prediction = modelb.predict(processed_image)
         probability = float(prediction[0][0])
         
-        # Generate processing steps images
+   
         process_and_save_images(temp_image_path)
         
-        # Create PDF with the result
-        final_result = probability * 100  # Convert to percentage
-        create_pdf(final_result)  # Using the original create_pdf function
+      
+        final_result = probability * 100  
+        create_pdf(final_result)  
 
-        # Create response with PDF file
+
         pdf_path = "image_processing_steps.pdf"
         
-        # Return the PDF file and let FastAPI handle the cleanup
+
         return FileResponse(
             path=pdf_path,
             media_type='application/pdf',
@@ -454,11 +453,10 @@ async def predict_tumor(
         )
 
     except Exception as e:
-        # Clean up temporary files in case of error
         cleanup(temp_image_path, "image_processing_steps.pdf")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Separate cleanup function
+
 def cleanup(temp_image_path: str, pdf_path: str):
     try:
         if os.path.exists(temp_image_path):
