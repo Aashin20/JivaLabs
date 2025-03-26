@@ -92,7 +92,7 @@ def create_pdf(final_result):
     c.drawString(left_x, info_y-0.9*inch, "Provisional Result:")
     c.setFont("Helvetica", 12)
     result=""
-    result="Yes" if final_result>70 else "No"
+    result="Yes" if final_result>=60 else "No"
     c.drawString(left_x + 1.5*inch, info_y-0.9*inch, f"{result}")
     
 
@@ -107,12 +107,12 @@ def create_pdf(final_result):
     vertical_spacing = 0.1*inch   
     
     images = [
-        ('gray.png', 'Grayscale'),
-        ('blurred.png', 'Gaussian Blur'),
-        ('threshold.png', 'Threshold'),
-        ('eroded.png', 'Eroded'),
-        ('dilated.png', 'Dilated'),
-        ('contours.png', 'Contours')
+        ('gray.png', 'NeuroSpectral View'),
+        ('blurred.png', 'Diffusion Map'),
+        ('threshold.png', 'Tumor Segmentation'),
+        ('eroded.png', 'Morphological Reduction'),
+        ('dilated.png', 'Lesion Enhancement'),
+        ('contours.png', 'Neoplastic Boundary Detection')
     ]
     
     
