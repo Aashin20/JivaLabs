@@ -7,6 +7,7 @@ import parselmouth
 from pdf.report import create_report
 from parselmouth.praat import call
 import numpy as np
+import json
 from sklearn.preprocessing import StandardScaler
 import librosa
 from scipy.stats import kurtosis, skew
@@ -30,6 +31,12 @@ from tensorflow.keras.models import load_model
 from fastapi.middleware.cors import CORSMiddleware
 from pdf.report_tumor import create_pdf,process_and_save_images
 from starlette.background import BackgroundTask
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List
+import groq
+import os
+from datetime import datetime
  
 labels: List[str] = ['Healthy', 'Parkinson']
 
@@ -49,6 +56,12 @@ class PredictionOutput(BaseModel):
     prediction: int
     probability: float
     prediction_label: str
+
+class PromptRequest(BaseModel):
+    prompt: str
+
+class PromptResponse(BaseModel):
+    response: Dict[str, str]
 
 class VoiceFeatureExtractor:
     def __init__(self, sample_rate=44100):
@@ -157,7 +170,8 @@ class VoiceFeatureExtractor:
             'F2_conv': f2 * np.mean(sound.values.T[0])
         }
         return features
-
+GROQ_API_KEY = "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"
+client = groq.Client(api_key=GROQ_API_KEY)
 def analyze_audio(file_path: str) -> Dict[str, Any]:
     try:
     
@@ -270,7 +284,43 @@ async def predict_from_audio(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
     
+@app.post("/chat", response_model=PromptResponse)
+async def generate_response(request: PromptRequest):
+    try:
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": """You are JivaAI, a medical AI advisor. You must respond in a JSON format with exactly two keys: 'overview' and 'recommendations'.
 
+                For the 'overview' key: Provide a clear and concise explanation of the health condition or concern, including common symptoms, causes, and general information.
+
+                For the 'recommendations' key: Provide practical recommendations, lifestyle changes, home remedies, and self-care tips that can help manage or improve the condition. Include specific actionable items like dietary suggestions, exercise recommendations, lifestyle modifications, home remedies, and prevention tips.
+
+                Your response should be formatted exactly like this:
+                {
+                    "overview": "your overview text here",
+                    "recommendations": "your recommendations text here"
+                }
+
+                Make sure your response can be parsed as valid JSON. Do not include any other text or formatting outside of this JSON structure."""},
+                {"role": "user", "content": request.prompt}
+            ],
+            temperature=0.7,
+            max_tokens=2000
+        )
+
+        response_text = completion.choices[0].message.content
+        
+        try:
+            response_json = json.loads(response_text)
+            return PromptResponse(response=response_json)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=500, detail="Failed to generate valid JSON response")
+
+    except groq.GroqError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/predict/park")
@@ -376,10 +426,16 @@ async def pneumonia_router(file: UploadFile = File(...)):
  
     prediction = model.predict(image)
     probability = float(prediction[0][0])  
-    predicted_class = 'pneumonia' if probability > 0.5 else 'normal'
+    predicted_class = 'Affected' if probability > 0.5 else 'normal'
+    if predicted_class=="pneumonia":
+        recommendation="""Take all prescribed antibiotics as directed and complete the full course even if symptoms improve.
+          Get plenty of rest and stay hydrated by drinking 8-10 glasses of water daily, along with warm liquids like herbal tea and soup. Use a humidifier to ease breathing, practice deep breathing exercises, and sleep in a slightly upright position to help with breathing."""
+    else:
+        recommendation="Stay Safe"
     return {
         'predicted_class': predicted_class,
-        'pneumonia_probability': probability
+        'pneumonia_probability': round(probability*100,2),
+        'recommendation': recommendation
     }
 
 
@@ -449,22 +505,14 @@ async def predict_tumor(
             path=pdf_path,
             media_type='application/pdf',
             filename="brain_tumor_report.pdf",
-            background=BackgroundTask(cleanup, temp_image_path, pdf_path)
+            
         )
 
     except Exception as e:
-        cleanup(temp_image_path, "image_processing_steps.pdf")
+        
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def cleanup(temp_image_path: str, pdf_path: str):
-    try:
-        if os.path.exists(temp_image_path):
-            os.remove(temp_image_path)
-        if os.path.exists(pdf_path):
-            os.remove(pdf_path)
-    except Exception as e:
-        print(f"Error during cleanup: {e}")
     
 dysarthria_model = load_model('models/dysarthria_model.keras')  
 dysarthria_scaler = StandardScaler()
